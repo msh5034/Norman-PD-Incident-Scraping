@@ -1,0 +1,219 @@
+CS5293 Project 0
+Matt Huson
+matthew.s.huson@ou.edu
+
+PYTHON VERSION USED
+
+Python 3.8.1
+
+LIBRARIES NEEDED
+
+urllib.request - built in
+re - built in
+sqlite3 - built in
+argparse - built in
+PyPDF2 - external
+tempfile - built in
+pandas - external
+patch, from unittest.mock - built in
+pytest - external
+
+INSTALLATION
+
+-install pyenv using "curl https://pyenv.run | bash"
+-install python 3.8.1 using "pyenv install 3.8.1"
+-install pipenv using "pip install -U pipenv"
+-install external libraries using "pipenv install <library name>"
+
+EXECUTION
+
+This program can be run from the cs5293sp20-project0 directory with the following command:
+
+pipenv run python project0/main.py --incidents <url>
+
+Where <url> above is replaced with a valid URL to a Norman PD daily incident report
+
+To run the test functions, execute the following command while in the cs5293sp20-project0 directory:
+
+pipenv run python -m pytest -v 
+
+ASSUMPTIONS/BUGS
+
+-assumed that the only column with internal linebreaks is the Address column; if any other columns contain internal linebreaks, populate_db() will run incorrectly, and may fail
+
+-assumed the the only valid ORI codes are "14009", "14005", "EMSSTAT" and "OK0140200". If other codes are developed, test_populatedb will need to be updated to include them
+
+-assumed the only column with missing entries was the "nature" column; if any other column is empty, populate_db() will write incorrectly to the database
+    *specifically, if the date column is left blank, the regex in extract_incidents() will merge what is supposed to be two incident strings into one, further complicating the process
+    *even with this potential weakness, the date seemed to be more reliably present than a consistent number of linebreaks, which is why it was kept as the delimiter in extract_incidents()
+    *neither date nor ORI code were missing in any of the reports that I looked at, but date was decided upon as the delimiter due to being the first column
+
+-was unable to handle a situation where there was both an internal linebreak in the address column, and a missing nature entry in the same row. If this occurs, populate_db() will write incorrectly to the db 
+    *This is because a row that has an extra linebreak in the address column, but a missing nature column will look like a normal row to the populate_db() function, as it indexes the strings by linebreak, and I couldn't find a way to structurally differentiate between the address column and nature column
+
+-any change in the column structure of the daily report, or the addition of different headers/footers/etc. will cause incorrect data to be entered into the db
+
+-assumed that the Norman PD incident reports will continue to be separated by \n linebreaks, as they are used as delimiters in a few functions
+
+-assumed that the report will continue to be in .pdf format; any change will make the program unable to read the report
+
+-assumed that the report retrieval date will continue to only appear at the bottom of the final page; if it appears anywhere else, the regular expression in extract_incidents() will incorrectly add it to the incidents array, which will cause populate_db() to fail 
+
+-assumed that dates will continue to only be represented by numbers and slashes (e.g. 2/20/2020). The program can handle any numerical formulation that includes two slashes (British, American, etc.), but the regular expression in extract_incidents() will fail given any text representation of the date
+
+DIRECTORY STRUCTURE
+
+cs5293sp20-project0
+├── COLLABORATORS
+├── Pipfile
+├── Pipfile.lock
+├── README
+├── docs
+├── normanpd.db - this is where it shows up when create_db() is run
+├── project0
+│   ├── __init__.py
+│   └── main.py
+├── setup.cfg
+├── setup.py
+└── tests
+    └── test_main.py
+
+
+This project takes a Norman PD daily incidents report URL, creates a database named normanpd.db, inserts the incidents into the database, and then prints out each "incident nature" listed, along with the nature's frequency.
+
+FUNCTIONS
+
+To do this, the program is split up into 6 main functions:
+
+fetch_incidents(url):
+
+parameters: a valid url to a pdf file
+returns: an HTTP Request Object
+libraries: urllib.request
+
+-fetch_incidents takes the Norman PD incident report URL as an argument, and passes the url into the urllib.request.urlopen() function, returning the resultant HTTP Request object.
+
+extract_incidents(data):
+
+parameters: an HTTP Request Object
+returns: an array of strings describing the incidents on the report, where each array entry is one complete incident
+libraries: PyPDF2, tempfile, re
+
+-extract_incidents takes the HTTP Request object data from fetch_incidents and uses a PyPDF PdfFileReader() object to read the data to a temporary file.
+-it then uses the getPage().extractText() functionality to read the content of each page into a string, named "content", and uses content.replace() to remove the Norman PD header
+-next, it uses finditer() from the re package to identify and store each index where there is a date structure (mm/dd/yyyy, but it can also handle yyyy/mm/dd, or other configurations)
+-finally, it iterates through those indices and creates an array, where each array value is the string consisting of all content between each index, and returns that array
+
+create_db(db):
+
+parameters: a valid database name
+returns: nothing
+libraries: sqlite3
+
+-create_db() takes a database name, and uses sqlite3.connect() to create or connect to the named database, and creates a cursor that it uses for SQL queries
+-it then checks to see if a table named "incidents" exists, and drops it if it does. This ensures that the table only has the desired data in it, and not data from other daily reports
+-after the table is dropped, or if the table does not already exist, a new "incidents" table is created with a schema to match that of the daily incidents report, and the function terminates, returning nothing
+
+populate_db(db, incidents):
+
+parameters: database name, array of incidents from extract_incidents()
+returns: nothing
+libraries: sqlite3, re
+
+-populate_db() takes the database created in create_db(), and the incidents extracted in extract_incidents(), and inserts the incidents into the db
+-it imports the re library and iterates over every string in the incidents array, using re.finditer() to find every line break in each entry
+-once the line breaks are found, it extracts the information between the line breaks to get strings for each column in daily incident report
+-it indexes from the beginning until it gets to the address column, and then it reaches around from the end from the address column on, due to the address column occasionally having internal line breaks
+-next, the location variable is checked to make sure it is not empty, which would indicate that the nature column was blank on the pdf. If it is, the nature value is assigned to location and nature is set to "Not Entered"
+-once an entry for each column has been extracted, it uses sqlite3 to insert each tuple into the specified database table
+
+status(db):
+
+parameters: database name
+returns: nothing, prints results to console
+libraries: pandas, sqlite3
+
+-status() takes a database name, and prints out a pipe-separated report of each incident nature, along with the frequency of that nature
+-it uses sqlite3 to connect to and query the database, and pandas to receive the results of the query
+-the query selects nature and COUNT(nature) from the incidents table, using pandas.read_sql_query()
+-finally it iterates through each row of the pandas dataframe, printing the nature name, and nature frequency, separating them with a "|"
+
+main(url):
+
+parameters: valid url to Norman PD incident report
+returns: nothing, prints results to console
+libraries: none
+
+-the main function takes a url, passes it to fetch_incidents(), then takes the resulting HTTP Request object and passes it to extract_incidents(), receiving the returned array in a variable
+-next, it passes "normanpd.db" into create_db(), and then passes that db name and the incidents array to populate_db()
+-finally, it passes the db name into status() and prints the result
+
+"Main Guard"
+
+parameters: "--incidents" and a url
+returns: nothing, initiates main() function with the url
+libraries: argparser
+
+-the main guard takes a url from the command line and passes it into the main() function using an argparser.ArgumentParser() object
+
+TESTS
+
+test_fetchincidents():
+
+parameters: none
+asserts: the code returned by the fetch_incidents() HTTP Request object == 200 
+libraries: main.py
+
+-uses the .getcode() functionality to check if the HTTP code for the request is 200, which indicates a successful HTTP response, to make sure fetch_incidents() is correctly communicating with the website
+
+test_extractincidents()
+
+parameters: none
+asserts: length of incidents array == length of array that tests for correct begin/end to strings in array
+libraries: main.py, re
+
+-calls extract_incidents() on the HTTP request object returned by fetch_incidents()
+-uses regular expressions to ensure that each string in the array starts with a date format and ends with a proper ORI code
+-it does this by comparing the length of the array to the lengths of the arrays formed by the regular expressions 
+
+test_createdb():
+
+parameters: none
+asserts: that a table named "incidents" has been created in "normanpd.db" and it is empty
+libraries: main.py, sqlite3
+
+-calls create_db() and uses sqlite3 to run queries checking that there is 1 table in the db named "incidents" and that the incidents table has 0 rows
+
+test_populatedb():
+
+parameters: none
+asserts: that the number of rows in the populated db == number of correctly formatted tuples and there are no empty location strings
+libraries: main.py, sqlite3, re
+
+-creates a test array of strings, similar to what is returned by extract_incidents(), and feeds that array into populate_db()
+-array has line breaks in the address column, and one tuple with a blank nature, to make sure populate_db() can handle them
+-uses sqlite3 to query the database and make sure the proper number of tuples have been inserted
+-checks the proper handling of the address line breaks by using regular expressions to make sure every tuple has a legal ORI code in the incident_ori column, and that all locations have a length > 0
+
+test_status(mock_print):
+
+parameters: mock_print, a mock of the builtin print function
+asserts: that the final line printed from the dummy incidents array is correct
+libraries: main.py, patch - from unittest.mock
+
+-mocks the print function to make sure the output of status() is correct
+-runs create_db()to make sure there is an empty table to work with
+-populates the empty db with the same test array as above
+-uses mock_print.assert_called_with() to make sure the last line printed by status() is the expected last line
+
+REFERENCES
+
+-Stack Overflow for help understanding urllib: https://stackoverflow.com/questions/24844729/download-pdf-using-urllib
+-sentdex on Youtube for help understanding sqlite3:  https://www.youtube.com/user/sentdex
+-Real Python for understanding how to mock the print function: https://realpython.com/python-print/#mocking-python-print-in-unit-tests
+
+
+
+
+
+
